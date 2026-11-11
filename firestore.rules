@@ -1,0 +1,42 @@
+rules_version = '2';
+// Nabd beds system — Egypt Healthcare Authority, Minia Branch
+// Public read for everyone with the link; writes only for admins and linked hospital accounts.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    function member() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function myHid() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.hid; }
+
+    match /hospitals/{hid} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (member() && myHid() == hid && request.resource.data.id == hid);
+    }
+    match /log/{id} {
+      allow read: if true;
+      allow create: if (isAdmin() || member()) && request.resource.data.by == request.auth.uid;
+    }
+    match /users/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow write: if isAdmin();
+    }
+    match /admins/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow write: if isAdmin();
+      // first run only: the very first account claims admin together with meta/bootstrap
+      allow create: if signedIn() && request.auth.uid == uid
+        && !exists(/databases/$(database)/documents/meta/bootstrap)
+        && getAfter(/databases/$(database)/documents/meta/bootstrap).data.uid == uid;
+    }
+    match /meta/bootstrap {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && !exists(/databases/$(database)/documents/meta/bootstrap)
+        && existsAfter(/databases/$(database)/documents/admins/$(request.auth.uid));
+      allow update, delete: if false;
+    }
+  }
+}
